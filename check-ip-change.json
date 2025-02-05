@@ -1,9 +1,9 @@
 [
     {
-        "py/object": "__main__.GoogleDomainsConfig",
-        "domainname": "",
-        "username": "",
-        "password": "",
+        "py/object": "__main__.CloudFlareDomainsConfig",
+        "domain_name": "",
+        "zone_id": "",
+        "api_key": "",
         "email": ""
     }
 ]

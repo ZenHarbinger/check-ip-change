@@ -17,6 +17,7 @@
 """
 
 import argparse
+from cloudflare import Cloudflare
 import dns.resolver
 import jsonpickle
 import os.path
@@ -25,28 +26,54 @@ import sys
 import urllib.parse
 import urllib.request
 import xdg.BaseDirectory
+from pprint import pprint
 
-class GoogleDomainsConfig(object):
+class CloudFlareDomainsConfig(object):
     """Houses all information for connecting to Google Domains for changing Synthetic records."""
-    def __init__(self, domainname, username, password, email):
+    def __init__(self, zone_id, domain_name, api_key, email):
         """Constructor, set all values"""
-        self.domainname = domainname
-        self.username = username
-        self.password = password
+        self.zone_id = zone_id
+        self.domain_name = domain_name
+        self.api_key= api_key 
         self.email = email
 
     def getServerIP(self):
         """Gets the DNS Specified IP of the requested name."""
-        answers = dns.resolver.query(self.domainname, 'A')
+        self.getRecords()
+        #answers = dns.resolver.query(self.domain_name, 'A')
         return str(answers[0])
 
-    def updateDns(self, newIp):
-        """Performs a GET which will update the Synthetic DNS record hosted through Google Domains."""
-        params = urllib.parse.urlencode({'hostname': self.domainname, 'myip': newIp})
-        update_url = "https://" + self.username + ":" + self.password + "@domains.google.com/nic/update?" + str(params)
-        opener = urllib.request.FancyURLopener()
-        opener.version = "Chrome/41.0 " + self.email
-        f = opener.open(update_url)
+    def get_record_id(self):
+        os.environ["CLOUDFLARE_ZONE_ID"] = self.zone_id
+        os.environ["CLOUDFLARE_API_KEY"] = self.api_key
+        os.environ["CLOUDFLARE_EMAIL"] = self.email
+        client = Cloudflare()
+        page = client.dns.records.list(
+            zone_id=self.zone_id,
+        )
+        id = None
+        ip = None
+        for res in page.result:
+            if res.name == self.domain_name:
+                id = res.id
+                ip = res.content
+        return (id, ip)
+
+    def update_dns(self, new_ip, old_ip, id):
+        if new_ip == old_ip:
+            print("No Change: " + self.domain_name)
+            return
+
+        print("Updating IP: " + old_ip + " to " + new_ip + " for " + self.domain_name)
+        os.environ["CLOUDFLARE_ZONE_ID"] = self.zone_id
+        os.environ["CLOUDFLARE_API_KEY"] = self.api_key
+        os.environ["CLOUDFLARE_EMAIL"] = self.email
+        client = Cloudflare()
+        client.dns.records.edit(
+            dns_record_id=id,
+            zone_id=self.zone_id,
+            content=new_ip,
+        )
 
 def getLocalIP():
     """Get the public IP of the current network (works behind firewall)."""
@@ -68,7 +95,7 @@ def loadConfigs(cfg_path):
 
 if __name__ == "__main__":
     # TODO: be able to pass in all add/remove arguments on the command line instead of being interactive.
-    parser = argparse.ArgumentParser(description='Update Google Domains DyDNS Records.')
+    parser = argparse.ArgumentParser(description='Update CloudFlare Domains DyDNS Records.')
     parser.add_argument('--list', action='store_true', help='list configured records')
     parser.add_argument('--add', action='store_true', help='add a new configuration')
     parser.add_argument('--remove', action='store_true', help='remove a configuration')
@@ -93,10 +120,11 @@ if __name__ == "__main__":
     elif args.list:
         counter = 1
         for gdc in gdc_list:
-            print("[ " + str(counter) + " ] " + gdc.domainname)
+            print("[ " + str(counter) + " ] " + gdc.domain_name)
             print("--------------------------")
-            print("username: " + gdc.username)
-            print("password: " + gdc.password)
+            print("api_key: " + gdc.api_key)
+            print("zone_id: " + gdc.zone_id)
+            print("dommain_name: " + gdc.domain_name)
             print("email: " + gdc.email)
             print()
             counter += 1
@@ -105,10 +133,10 @@ if __name__ == "__main__":
         sys.exit(0)
     elif args.add:
         domain = input("Domain: ")
-        user = input("User: ")
-        password = input("Password: ")
+        zone_id = input("Zone ID: ")
+        api_key = input("API KEY: ")
         email = input("E-Mail: ")
-        gdc = GoogleDomainsConfig(domain, user, password, email)
+        gdc = CloudFlareDomainsConfig(zone_id, domain, api_key, email)
         gdc_list.append(gdc)
 
         fp = open(cfg_path, 'w')
@@ -125,7 +153,7 @@ if __name__ == "__main__":
             index = -1
             counter = 0;
             for gdc in gdc_list:
-                if gdc.domainname == domain:
+                if gdc.domain_name == domain:
                     index = counter
                 counter += 1
             if index >= 0:
@@ -142,15 +170,7 @@ if __name__ == "__main__":
         local = getLocalIP()
         print ("Local IP: " + local)
         for gdc in gdc_list:
-            server = gdc.getServerIP()
-            print ("DNS Specified IP: " + server)
-            if local != server:
-                #TODO: maybe have a y/n for updating?
-                print ("Updating DNS Record: " + gdc.domainname + " to " + local)
-                gdc.updateDns(local);
-                pass
-            else:
-                print ("No change in DNS record: " + gdc.domainname)
-                pass
+            (id, ip) = gdc.get_record_id()
+            gdc.update_dns(ip, local, id)
     else:
         print (cfg_path + ": does not exist or is not configured.")
